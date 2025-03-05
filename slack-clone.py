@@ -14,6 +14,7 @@ from datetime import datetime
 
 # Registry key for storing settings
 REG_PATH = r"Software\SlackClone"
+SERVER_URL = "ws://localhost:8081/ws"
 
 def save_to_registry(key, value):
     try:
@@ -455,7 +456,7 @@ class MainWindow(QMainWindow):
         self.channel_items = {}
         
         for channel in self.channels:
-            channel_item = ChannelItem(channel, channel == "전체체")
+            channel_item = ChannelItem(channel, channel == "전체")
             channel_item.clicked.connect(self.onChannelSelected)
             self.channel_items[channel] = channel_item
             self.channelListLayout.addWidget(channel_item)
@@ -526,7 +527,7 @@ class MainWindow(QMainWindow):
         
         self.messageInput = QTextEdit()
         self.messageInput.setObjectName("messageInput")
-        self.messageInput.setPlaceholderText("#슬랙-클론에 메시지 보내기")
+        self.messageInput.setPlaceholderText("#전체에 메시지 보내기")
         self.messageInput.setFixedHeight(80)
         
         # 메시지 도구 모음
@@ -563,7 +564,7 @@ class MainWindow(QMainWindow):
         
         # WebSocket Worker (별도 스레드)
         self.wsThread = QThread()
-        self.wsWorker = WebSocketWorker(QUrl("ws://localhost:8081/ws"))
+        self.wsWorker = WebSocketWorker(QUrl(SERVER_URL))
         self.wsWorker.moveToThread(self.wsThread)
         self.wsThread.started.connect(self.wsWorker.start)
         self.wsThread.finished.connect(self.wsWorker.stop)
@@ -614,7 +615,7 @@ class MainWindow(QMainWindow):
 
     def openSettingsDialog(self):
         dialog = SettingsDialog(self)
-        dialog.exec_()
+        dialog.exec()
 
     def onChannelSelected(self, channel_name):
         # 이전 선택 해제
@@ -631,6 +632,41 @@ class MainWindow(QMainWindow):
             # 채널 데이터 요청
             self.requestChannelData(channel_name)
 
+    def requestWorkspaceList(self):
+        current_time = datetime.now()
+        username = load_from_registry("username") or "사용자"
+        request_message = json.dumps({
+            "date": current_time.strftime("%Y-%m-%d"),
+            "time": current_time.strftime("%I:%M:%S"),
+            "sender": username,
+            "action": "get_workspace_list",
+            "message": ""
+        })
+        QMetaObject.invokeMethod(
+            self.wsWorker,
+            "sendMessage",
+            Qt.QueuedConnection,
+            Q_ARG(str, request_message)
+        )
+        
+    def requestChannelList(self):
+        current_time = datetime.now()
+        username = load_from_registry("username") or "사용자"
+        request_message = json.dumps({
+            "date": current_time.strftime("%Y-%m-%d"),
+            "time": current_time.strftime("%I:%M:%S"),
+            "sender": username,
+            "action": "get_channel_list",
+            "workspace": self.current_workspace,
+            "message": ""
+        })
+        QMetaObject.invokeMethod(
+            self.wsWorker,
+            "sendMessage",
+            Qt.QueuedConnection,
+            Q_ARG(str, request_message)
+        )
+        
     def requestChannelData(self, channel_name):
         self.messageArea.clear()
         current_time = datetime.now()
@@ -640,6 +676,7 @@ class MainWindow(QMainWindow):
             "time": current_time.strftime("%I:%M:%S"),
             "sender": username,
             "action": "get_channel_data", 
+            "workspace": self.current_workspace,
             "channel": channel_name, 
             "message": ""
         })
@@ -700,14 +737,54 @@ class MainWindow(QMainWindow):
     def onWebSocketMessage(self, msg: str):
         try:
             data = json.loads(msg)
+            action = data.get("action")
             if data.get("action") == "channel_data":
                 self.messageArea.clear()
                 messages = data.get("message", [])
+                
+                # 메시지를 날짜별로 그룹화
+                message_groups = {}
                 for message in messages:
-                    sender = message.get("sender", "Unknown")
-                    time = message.get("time", "")
-                    text = message.get("message", "")
-                    self.messageArea.append(self.formatMessage(sender, time, text))
+                    date = message.get("date", "Unknown")
+                    if date not in message_groups:
+                        message_groups[date] = []
+                    message_groups[date].append(message)
+                
+                # 정렬된 날짜 목록
+                sorted_dates = sorted(message_groups.keys())
+                
+                # 날짜별로 메시지 표시
+                for date in sorted_dates:
+                    # 날짜 구분선 추가
+                    self.messageArea.append(self.formatDateSeparator(date))
+                    
+                    # 해당 날짜의 메시지들 추가
+                    for message in message_groups[date]:
+                        sender = message.get("sender", "Unknown")
+                        time = message.get("time", "")
+                        text = message.get("message", "")
+                        self.messageArea.append(self.formatMessage(sender, time, text))
+            elif action == "workspace_list":
+                self.workspaces = []
+                self.channels = []
+                self.messageArea.clear()
+                for action in self.wsMenu.actions():
+                    self.wsMenu.removeAction(action)
+                
+                workspace_list = data.get("message", {})
+                for workspace in workspace_list.keys():
+                    self.workspaces.append(workspace)
+                for channel in workspace_list[self.workspaces[0]]:
+                    self.channels.append(channel)
+                    
+                self.updateWorkspaces(self.workspaces[0])
+                print("Received workspace list:", self.workspaces)
+                # Handle workspace list update logic here
+            elif action == "channel_list":
+                self.messageArea.clear()
+                self.channels = data.get("message", [])
+                print("Received channel list:", self.channels)
+                # Handle channel list update logic here
             else:
                 current_time = datetime.now().strftime("%p %I:%M")
                 self.messageArea.append(self.formatMessage("Server", current_time, msg))
@@ -722,7 +799,7 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def onWebSocketConnected(self):
-        self.requestChannelData(self.current_channel)
+        self.requestWorkspaceList()
         self.reconnectTimer.stop()
 
     @Slot()
@@ -764,6 +841,18 @@ class MainWindow(QMainWindow):
         
         # 워크스페이스 메뉴 설정
         self.setupWorkspaceMenu()
+        
+        # 채널 목록 업데이트 요청
+        self.workspaceBtn.clicked.connect(self.showWorkspaceMenu)
+        
+    def updateWorkspaces(self, workspace_name):
+        self.current_workspace = workspace_name
+        
+        # 워크스페이스 버튼 업데이트
+        self.updateWorkspaceButton()
+        
+        # 워크스페이스 메뉴 설정
+        self.setupWorkspaceMenu()
 
     def updateWorkspaceButton(self):
         # 현재 워크스페이스의 첫 글자를 버튼에 표시
@@ -771,7 +860,7 @@ class MainWindow(QMainWindow):
             self.workspaceBtn.setText(self.current_workspace[0])
             self.wsHeader.findChild(QLabel).setText(self.current_workspace)
 
-    def setupWorkspaceMenu(self):
+    def setupWorkspaceMenu(self):            
         self.wsMenu = QMenu(self)
         
         for ws in self.workspaces:
@@ -784,11 +873,9 @@ class MainWindow(QMainWindow):
         manageAction = QAction("워크스페이스 관리", self)
         manageAction.triggered.connect(self.manageWorkspaces)
         self.wsMenu.addAction(manageAction)
-        
-        self.workspaceBtn.clicked.connect(self.showWorkspaceMenu)
 
     def showWorkspaceMenu(self):
-        self.wsMenu.exec_(self.workspaceBtn.mapToGlobal(self.workspaceBtn.rect().bottomLeft()))
+        self.wsMenu.exec(self.workspaceBtn.mapToGlobal(self.workspaceBtn.rect().bottomLeft()))
 
     def switchWorkspace(self, workspace_name):
         if workspace_name != self.current_workspace:
@@ -833,7 +920,7 @@ class MainWindow(QMainWindow):
 
     def manageWorkspaces(self):
         dialog = WorkspaceDialog(self, self.workspaces)
-        if dialog.exec_() == QDialog.Accepted:
+        if dialog.exec() == QDialog.Accepted:
             self.workspaces = dialog.getWorkspaces()
             # 워크스페이스 목록 저장
             save_to_registry("workspaces", json.dumps(self.workspaces))
@@ -902,7 +989,7 @@ class MainWindow(QMainWindow):
         # 버튼 위치에 메뉴 표시
         senderBtn = self.sender()
         if senderBtn:
-            moreMenu.exec_(senderBtn.mapToGlobal(senderBtn.rect().bottomLeft()))
+            moreMenu.exec(senderBtn.mapToGlobal(senderBtn.rect().bottomLeft()))
 
     def showThreads(self):
         # 스레드 화면으로 이동하는 로직
@@ -936,44 +1023,6 @@ class MainWindow(QMainWindow):
         </div>
         """)
         self.channelTitle.setText("🧩 앱")
-      
-    # onWebSocketMessage 메소드 수정 (MainWindow 클래스 내)
-    @Slot(str)
-    def onWebSocketMessage(self, msg: str):
-        try:
-            data = json.loads(msg)
-            if data.get("action") == "channel_data":
-                self.messageArea.clear()
-                messages = data.get("message", [])
-                
-                # 메시지를 날짜별로 그룹화
-                message_groups = {}
-                for message in messages:
-                    date = message.get("date", "Unknown")
-                    if date not in message_groups:
-                        message_groups[date] = []
-                    message_groups[date].append(message)
-                
-                # 정렬된 날짜 목록
-                sorted_dates = sorted(message_groups.keys())
-                
-                # 날짜별로 메시지 표시
-                for date in sorted_dates:
-                    # 날짜 구분선 추가
-                    self.messageArea.append(self.formatDateSeparator(date))
-                    
-                    # 해당 날짜의 메시지들 추가
-                    for message in message_groups[date]:
-                        sender = message.get("sender", "Unknown")
-                        time = message.get("time", "")
-                        text = message.get("message", "")
-                        self.messageArea.append(self.formatMessage(sender, time, text))
-            else:
-                current_time = datetime.now().strftime("%p %I:%M")
-                self.messageArea.append(self.formatMessage("Server", current_time, msg))
-                self.showTrayMessage("새 메시지 도착", msg)
-        except json.JSONDecodeError:
-            print("[WebSocketWorker] Failed to decode message:", msg)
 
     # 날짜 구분선 포맷 메소드 추가 (MainWindow 클래스 내)
     def formatDateSeparator(self, date_str):
@@ -1038,4 +1087,4 @@ if __name__ == '__main__':
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
-    sys.exit(app.exec_())
+    sys.exit(app.exec())
