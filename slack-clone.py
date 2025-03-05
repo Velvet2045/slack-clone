@@ -33,6 +33,17 @@ def load_from_registry(key):
     except WindowsError:
         return None
 
+# 날짜 변환 유틸리티 함수 (클래스 외부에 추가)
+def format_date_korean(date_str):
+    """날짜 문자열을 한국어 형식으로 변환 (예: '2023-12-25' -> '2023년 12월 25일 월요일')"""
+    try:
+        date_obj = datetime.strptime(date_str, "%Y-%m-%d")
+        weekdays = ['월요일', '화요일', '수요일', '목요일', '금요일', '토요일', '일요일']
+        weekday = weekdays[date_obj.weekday()]
+        return f"{date_obj.year}년 {date_obj.month}월 {date_obj.day}일 {weekday}"
+    except:
+        return date_str
+    
 class SettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -162,6 +173,52 @@ class ChannelItem(QWidget):
         self.clicked.emit(self.channel_name)
         super().mousePressEvent(event)
 
+# 워크스페이스 관리 클래스 추가
+class WorkspaceDialog(QDialog):
+    def __init__(self, parent=None, workspaces=None):
+        super().__init__(parent)
+        self.setWindowTitle("워크스페이스 관리")
+        self.setFixedSize(400, 300)
+        
+        layout = QVBoxLayout(self)
+        
+        # 현재 워크스페이스 목록
+        self.workspaceList = QListWidget(self)
+        if workspaces:
+            for ws in workspaces:
+                self.workspaceList.addItem(ws)
+        
+        # 새 워크스페이스 추가 영역
+        inputLayout = QHBoxLayout()
+        self.wsNameEdit = QLineEdit()
+        self.wsNameEdit.setPlaceholderText("새 워크스페이스 이름")
+        addButton = QPushButton("추가")
+        addButton.clicked.connect(self.addWorkspace)
+        
+        inputLayout.addWidget(self.wsNameEdit)
+        inputLayout.addWidget(addButton)
+        
+        # 버튼
+        buttonBox = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttonBox.accepted.connect(self.accept)
+        buttonBox.rejected.connect(self.reject)
+        
+        layout.addWidget(QLabel("워크스페이스 목록:"))
+        layout.addWidget(self.workspaceList)
+        layout.addLayout(inputLayout)
+        layout.addWidget(buttonBox)
+    
+    def addWorkspace(self):
+        name = self.wsNameEdit.text().strip()
+        if name:
+            self.workspaceList.addItem(name)
+            self.wsNameEdit.clear()
+    
+    def getWorkspaces(self):
+        workspaces = []
+        for i in range(self.workspaceList.count()):
+            workspaces.append(self.workspaceList.item(i).text())
+        return workspaces
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -265,11 +322,11 @@ class MainWindow(QMainWindow):
             }
             #workspaceButton {
                 background-color: white;
-                color: #3F0E40;
+                color: #FFFFFF;
                 font-weight: bold;
                 font-size: 18px;
-                width: 36px;
-                height: 36px;
+                width: 60px;
+                height: 60px;
                 border-radius: 4px;
                 text-align: center;
                 margin: 5px;
@@ -306,24 +363,27 @@ class MainWindow(QMainWindow):
         wsLayout.setContentsMargins(5, 5, 5, 5)
         wsLayout.setAlignment(Qt.AlignTop)
         
-        # 워크스페이스 버튼 (다락방)
-        self.workspaceBtn = QPushButton("다")
+        # 워크스페이스 버튼 (실험실)
+        self.workspaceBtn = QPushButton("실")
         self.workspaceBtn.setObjectName("workspaceButton")
-        self.workspaceBtn.setFixedSize(36, 36)
+        self.workspaceBtn.setFixedSize(60, 60)
         wsLayout.addWidget(self.workspaceBtn, 0, Qt.AlignHCenter)
         
-        # 메뉴 아이콘들 (홈, DM, ...)
+        # 메뉴 아이콘들 (홈, DM, 내 활동, 더 보기)
         menuIcons = [
-            {"text": "홈", "icon": "🏠"},
-            {"text": "DM", "icon": "✉️"},
-            {"text": "내 활동", "icon": "🔍"}
+            {"text": "홈", "icon": "🏠", "action": self.navigateToHome},
+            {"text": "DM", "icon": "✉️", "action": self.navigateToDM},
+            {"text": "내 활동", "icon": "🔍", "action": self.navigateToActivity},
+            {"text": "더 보기", "icon": "...", "action": self.showMoreMenu}
         ]
-        
+
         for item in menuIcons:
             btn = QPushButton(item["icon"])
             btn.setToolTip(item["text"])
             btn.setObjectName("sidebarItem")
-            btn.setFixedSize(36, 36)
+            btn.setFixedSize(60, 60)
+            if "action" in item and item["action"]:
+                btn.clicked.connect(item["action"])
             wsLayout.addWidget(btn, 0, Qt.AlignHCenter)
         
         wsLayout.addStretch()
@@ -331,7 +391,7 @@ class MainWindow(QMainWindow):
         # 사용자 프로필 아이콘
         self.profileBtn = QPushButton("👤")
         self.profileBtn.setObjectName("sidebarItem")
-        self.profileBtn.setFixedSize(36, 36)
+        self.profileBtn.setFixedSize(60, 60)
         self.profileBtn.clicked.connect(self.openSettingsDialog)
         wsLayout.addWidget(self.profileBtn, 0, Qt.AlignHCenter)
         
@@ -349,13 +409,13 @@ class MainWindow(QMainWindow):
         wsHeaderLayout = QHBoxLayout(self.wsHeader)
         wsHeaderLayout.setContentsMargins(10, 10, 10, 10)
         
-        wsTitle = QLabel("다락방")
+        wsTitle = QLabel("실험실")
         wsTitle.setStyleSheet("color: white; font-weight: bold;")
         wsHeaderLayout.addWidget(wsTitle)
         
         newButton = QPushButton("▼")
         newButton.setStyleSheet("background: transparent; color: white; font-weight: bold;")
-        newButton.setFixedSize(24, 24)
+        newButton.setFixedSize(40, 40)
         wsHeaderLayout.addWidget(newButton)
         
         leftLayout.addWidget(self.wsHeader)
@@ -363,7 +423,7 @@ class MainWindow(QMainWindow):
         # 검색창
         self.searchBox = QLineEdit()
         self.searchBox.setObjectName("searchBox")
-        self.searchBox.setPlaceholderText("다락방 검색")
+        self.searchBox.setPlaceholderText("실험실 검색")
         leftLayout.addWidget(self.searchBox)
         
         # 섹션 & 채널 목록
@@ -391,11 +451,11 @@ class MainWindow(QMainWindow):
         self.channelListLayout.setSpacing(0)
         
         # 채널 항목 추가
-        self.channels = ["슬랙-클론", "개발", "일반"]
+        self.channels = ["전체", "소셜"]
         self.channel_items = {}
         
         for channel in self.channels:
-            channel_item = ChannelItem(channel, channel == "슬랙-클론")
+            channel_item = ChannelItem(channel, channel == "전체체")
             channel_item.clicked.connect(self.onChannelSelected)
             self.channel_items[channel] = channel_item
             self.channelListLayout.addWidget(channel_item)
@@ -429,13 +489,13 @@ class MainWindow(QMainWindow):
         self.channelHeader.setObjectName("channelHeader")
         chHeaderLayout = QHBoxLayout(self.channelHeader)
         
-        self.channelTitle = QLabel("# 슬랙-클론")
+        self.channelTitle = QLabel("# 전체")
         self.channelTitle.setObjectName("channelTitle")
         chHeaderLayout.addWidget(self.channelTitle)
         
         # 헤더 검색창
         self.headerSearch = QLineEdit()
-        self.headerSearch.setPlaceholderText("다락방 검색")
+        self.headerSearch.setPlaceholderText("실험실 검색")
         self.headerSearch.setFixedWidth(250)
         chHeaderLayout.addWidget(self.headerSearch)
         
@@ -447,7 +507,7 @@ class MainWindow(QMainWindow):
         for icon in ["🔔", "👥", "ⓘ"]:
             btn = QPushButton(icon)
             btn.setStyleSheet("background: transparent;")
-            btn.setFixedSize(32, 32)
+            btn.setFixedSize(40, 40)
             headerIconsLayout.addWidget(btn)
         
         chHeaderLayout.addWidget(headerIcons)
@@ -478,7 +538,7 @@ class MainWindow(QMainWindow):
         for icon in ["B", "I", "S", "🔗", "•", "1."]:
             btn = QPushButton(icon)
             btn.setStyleSheet("background: transparent; color: #616061;")
-            btn.setFixedSize(28, 28)
+            btn.setFixedSize(40, 40)
             toolbarLayout.addWidget(btn)
         
         toolbarLayout.addStretch()
@@ -521,7 +581,10 @@ class MainWindow(QMainWindow):
         self.createTrayIcon()
         
         # 현재 채널 설정
-        self.current_channel = "슬랙-클론"
+        self.current_channel = "전체체"
+        
+        # Add at the end of __init__
+        self.initWorkspaces()
 
     def createTrayIcon(self):
         self.trayIcon = QSystemTrayIcon(QIcon(":/images/logo.png"), self)
@@ -682,6 +745,295 @@ class MainWindow(QMainWindow):
                 # 새 채널로 바로 전환
                 self.onChannelSelected(channel_name)
 
+    # MainWindow 클래스에 워크스페이스 관련 메소드 추가 (아래 코드는 MainWindow 클래스 내에 추가)
+    def initWorkspaces(self):
+        # 레지스트리에서 워크스페이스 목록 로드
+        saved_workspaces = load_from_registry("workspaces")
+        if saved_workspaces:
+            try:
+                self.workspaces = json.loads(saved_workspaces)
+            except:
+                self.workspaces = ["실험실"]  # 기본값
+        else:
+            self.workspaces = ["실험실"]  # 기본값
+        
+        self.current_workspace = self.workspaces[0]
+        
+        # 워크스페이스 버튼 업데이트
+        self.updateWorkspaceButton()
+        
+        # 워크스페이스 메뉴 설정
+        self.setupWorkspaceMenu()
+
+    def updateWorkspaceButton(self):
+        # 현재 워크스페이스의 첫 글자를 버튼에 표시
+        if self.current_workspace:
+            self.workspaceBtn.setText(self.current_workspace[0])
+            self.wsHeader.findChild(QLabel).setText(self.current_workspace)
+
+    def setupWorkspaceMenu(self):
+        self.wsMenu = QMenu(self)
+        
+        for ws in self.workspaces:
+            action = QAction(ws, self)
+            action.triggered.connect(lambda checked, w=ws: self.switchWorkspace(w))
+            self.wsMenu.addAction(action)
+        
+        self.wsMenu.addSeparator()
+        
+        manageAction = QAction("워크스페이스 관리", self)
+        manageAction.triggered.connect(self.manageWorkspaces)
+        self.wsMenu.addAction(manageAction)
+        
+        self.workspaceBtn.clicked.connect(self.showWorkspaceMenu)
+
+    def showWorkspaceMenu(self):
+        self.wsMenu.exec_(self.workspaceBtn.mapToGlobal(self.workspaceBtn.rect().bottomLeft()))
+
+    def switchWorkspace(self, workspace_name):
+        if workspace_name != self.current_workspace:
+            self.current_workspace = workspace_name
+            self.updateWorkspaceButton()
+            # 채널 목록 업데이트 요청
+            self.requestWorkspaceData(workspace_name)
+
+    def requestWorkspaceData(self, workspace_name):
+        # 워크스페이스에 해당하는 채널 목록 요청 (실제 서버와 통신할 경우 구현)
+        # 이 예제에서는 임시로 몇 개의 채널을 생성
+        self.clearChannelList()
+        
+        # 워크스페이스별 기본 채널 설정
+        if workspace_name == "실험실":
+            self.channels = ["전체", "소셜"]
+        else:
+            self.channels = [f"{workspace_name}-전체", f"{workspace_name}-소셜"]
+        
+        # 채널 항목 추가
+        for channel in self.channels:
+            channel_item = ChannelItem(channel, channel == self.channels[0])
+            channel_item.clicked.connect(self.onChannelSelected)
+            self.channel_items[channel] = channel_item
+            self.channelListLayout.addWidget(channel_item)
+        
+        # 첫 번째 채널 선택
+        if self.channels:
+            self.current_channel = self.channels[0]
+            self.channelTitle.setText(f"# {self.current_channel}")
+            self.messageInput.setPlaceholderText(f"#{self.current_channel}에 메시지 보내기")
+            self.requestChannelData(self.current_channel)
+
+    def clearChannelList(self):
+        # 기존 채널 항목 모두 제거
+        self.current_channel = ""
+        for item in self.channel_items.values():
+            self.channelListLayout.removeWidget(item)
+            item.deleteLater()
+        self.channel_items.clear()
+        self.channels.clear()
+
+    def manageWorkspaces(self):
+        dialog = WorkspaceDialog(self, self.workspaces)
+        if dialog.exec_() == QDialog.Accepted:
+            self.workspaces = dialog.getWorkspaces()
+            # 워크스페이스 목록 저장
+            save_to_registry("workspaces", json.dumps(self.workspaces))
+            # 워크스페이스 메뉴 업데이트
+            self.setupWorkspaceMenu()
+            
+            # 현재 워크스페이스가 목록에 없으면 첫 번째 워크스페이스로 전환
+            if self.current_workspace not in self.workspaces and self.workspaces:
+                self.switchWorkspace(self.workspaces[0])
+          
+    # MainWindow 클래스에 새로운 네비게이션 메소드 추가
+    def navigateToHome(self):
+        # 홈 화면으로 이동하는 로직
+        self.messageArea.clear()
+        self.messageArea.append("""
+        <div style="text-align:center; margin-top:50px;">
+            <h2>홈</h2>
+            <p>최근 활동 및 알림을 표시하는 화면입니다.</p>
+        </div>
+        """)
+        self.messageInput.setPlaceholderText("메시지를 입력하세요")
+        self.channelTitle.setText("🏠 홈")
+
+    def navigateToDM(self):
+        # DM 화면으로 이동하는 로직
+        self.messageArea.clear()
+        self.messageArea.append("""
+        <div style="text-align:center; margin-top:50px;">
+            <h2>다이렉트 메시지</h2>
+            <p>사용자와의 개인 메시지를 주고받는 화면입니다.</p>
+        </div>
+        """)
+        self.messageInput.setPlaceholderText("DM을 입력하세요")
+        self.channelTitle.setText("✉️ 다이렉트 메시지")
+
+    def navigateToActivity(self):
+        # 내 활동 화면으로 이동하는 로직
+        self.messageArea.clear()
+        self.messageArea.append("""
+        <div style="text-align:center; margin-top:50px;">
+            <h2>내 활동</h2>
+            <p>나의 최근 활동 내역을 확인하는 화면입니다.</p>
+        </div>
+        """)
+        self.messageInput.setPlaceholderText("검색어를 입력하세요")
+        self.channelTitle.setText("🔍 내 활동")
+
+    def showMoreMenu(self):
+        # 더 보기 메뉴 표시
+        moreMenu = QMenu(self)
+        
+        # 메뉴 항목 추가
+        actions = [
+            {"text": "스레드", "icon": "🧵", "action": self.showThreads},
+            {"text": "파일", "icon": "📁", "action": self.showFiles},
+            {"text": "앱", "icon": "🧩", "action": self.showApps},
+            {"text": "설정", "icon": "⚙️", "action": self.openSettingsDialog}
+        ]
+        
+        for action in actions:
+            act = QAction(f"{action['icon']} {action['text']}", self)
+            if "action" in action and action["action"]:
+                act.triggered.connect(action["action"])
+            moreMenu.addAction(act)
+        
+        # 버튼 위치에 메뉴 표시
+        senderBtn = self.sender()
+        if senderBtn:
+            moreMenu.exec_(senderBtn.mapToGlobal(senderBtn.rect().bottomLeft()))
+
+    def showThreads(self):
+        # 스레드 화면으로 이동하는 로직
+        self.messageArea.clear()
+        self.messageArea.append("""
+        <div style="text-align:center; margin-top:50px;">
+            <h2>스레드</h2>
+            <p>스레드된 메시지를 모아서 보는 화면입니다.</p>
+        </div>
+        """)
+        self.channelTitle.setText("🧵 스레드")
+
+    def showFiles(self):
+        # 파일 화면으로 이동하는 로직
+        self.messageArea.clear()
+        self.messageArea.append("""
+        <div style="text-align:center; margin-top:50px;">
+            <h2>파일</h2>
+            <p>공유된 파일을 모아서 보는 화면입니다.</p>
+        </div>
+        """)
+        self.channelTitle.setText("📁 파일")
+
+    def showApps(self):
+        # 앱 화면으로 이동하는 로직
+        self.messageArea.clear()
+        self.messageArea.append("""
+        <div style="text-align:center; margin-top:50px;">
+            <h2>앱</h2>
+            <p>설치된 앱 목록을 보는 화면입니다.</p>
+        </div>
+        """)
+        self.channelTitle.setText("🧩 앱")
+      
+    # onWebSocketMessage 메소드 수정 (MainWindow 클래스 내)
+    @Slot(str)
+    def onWebSocketMessage(self, msg: str):
+        try:
+            data = json.loads(msg)
+            if data.get("action") == "channel_data":
+                self.messageArea.clear()
+                messages = data.get("message", [])
+                
+                # 메시지를 날짜별로 그룹화
+                message_groups = {}
+                for message in messages:
+                    date = message.get("date", "Unknown")
+                    if date not in message_groups:
+                        message_groups[date] = []
+                    message_groups[date].append(message)
+                
+                # 정렬된 날짜 목록
+                sorted_dates = sorted(message_groups.keys())
+                
+                # 날짜별로 메시지 표시
+                for date in sorted_dates:
+                    # 날짜 구분선 추가
+                    self.messageArea.append(self.formatDateSeparator(date))
+                    
+                    # 해당 날짜의 메시지들 추가
+                    for message in message_groups[date]:
+                        sender = message.get("sender", "Unknown")
+                        time = message.get("time", "")
+                        text = message.get("message", "")
+                        self.messageArea.append(self.formatMessage(sender, time, text))
+            else:
+                current_time = datetime.now().strftime("%p %I:%M")
+                self.messageArea.append(self.formatMessage("Server", current_time, msg))
+                self.showTrayMessage("새 메시지 도착", msg)
+        except json.JSONDecodeError:
+            print("[WebSocketWorker] Failed to decode message:", msg)
+
+    # 날짜 구분선 포맷 메소드 추가 (MainWindow 클래스 내)
+    def formatDateSeparator(self, date_str):
+        formatted_date = format_date_korean(date_str)
+        return f"""
+        <div style="display: flex; align-items: center; margin: 20px 0; color: #616061;">
+            <hr style="flex-grow: 1; border: none; border-top: 1px solid #E8E8E8; margin-right: 10px;">
+            <div style="font-size: 14px; font-weight: bold;">{formatted_date}</div>
+            <hr style="flex-grow: 1; border: none; border-top: 1px solid #E8E8E8; margin-left: 10px;">
+        </div>
+        """
+
+    # onSendClicked 메소드 수정 (MainWindow 클래스 내)
+    @Slot()
+    def onSendClicked(self):
+        text = self.messageInput.toPlainText().strip()
+        if not text:
+            return
+
+        channel = self.current_channel
+        current_time = datetime.now()
+        current_date = current_time.strftime("%Y-%m-%d")
+        username = load_from_registry("username") or "사용자"
+        
+        # WebSocket 메시지 전송
+        request_message = json.dumps({
+            "date": current_date, 
+            "time": current_time.strftime("%I:%M:%S"), 
+            "sender": username,
+            "action": "send_message", 
+            "channel": channel, 
+            "message": text
+        })
+        QMetaObject.invokeMethod(
+            self.wsWorker,
+            "sendMessage",
+            Qt.QueuedConnection,
+            Q_ARG(str, request_message)
+        )
+
+        # 현재 메시지 영역에 마지막 날짜 구분선이 없는 경우 추가
+        last_date_in_view = self.getLastDateInMessageArea()
+        if last_date_in_view != current_date:
+            self.messageArea.append(self.formatDateSeparator(current_date))
+        
+        # 메시지 추가
+        formatted_time = current_time.strftime('%p %I:%M')
+        self.messageArea.append(self.formatMessage(username, formatted_time, text))
+        self.messageInput.clear()
+
+    # 메시지 영역에서 마지막 날짜 구분선 확인 메소드 추가 (MainWindow 클래스 내)
+    def getLastDateInMessageArea(self):
+        """메시지 영역에 표시된 마지막 날짜 구분선의 날짜를 반환"""
+        html = self.messageArea.toHtml()
+        
+        # 간단한 구현: 현재 날짜 반환 (실제로는 HTML 파싱 필요)
+        # 실제 구현에서는 정규식이나 HTML 파서를 사용하여 
+        # 마지막으로 표시된 날짜 구분선을 찾아야 함
+        return datetime.now().strftime("%Y-%m-%d")  
+      
 if __name__ == '__main__':
     app = QApplication(sys.argv)
     window = MainWindow()
